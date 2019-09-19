@@ -71,7 +71,7 @@ def create_data_types(spec, component_dir, cli, ignore_data):
                 )
 
 
-def overwrite_component_if_exists(spec, profile, overwrite, credentials):
+def component_exists(spec, profile, overwrite, credentials):
     """
     :param spec: Component specification
     :type spec: dict
@@ -93,12 +93,10 @@ def overwrite_component_if_exists(spec, profile, overwrite, credentials):
         comps = wi.component.get_component_description(name)
         if comps is not None:
             log.info("Component already exists on server")
-            if overwrite:
-                log.info("Overwriting existing component")
-            else:
+            if not overwrite:
                 log.error("Publishing this component would overwrite the existing one. To force upload use flag -f")
-                log.info("Aborting publish")
-        return overwrite
+            return True
+        return False
 
 
 def deploy_component(component_dir, profile=None, creds={}, debug=False, dry_run=False, ignore_data=False, overwrite=None):
@@ -118,11 +116,6 @@ def deploy_component(component_dir, profile=None, creds={}, debug=False, dry_run
             log.error(err)
             exit(1)
 
-        if not overwrite_component_if_exists(spec, profile, overwrite, creds):
-            log.info("Aborting publish")
-            return
-        log.info("Replacing the component")
-
         name = spec["name"]
         version = spec["version"]
 
@@ -132,6 +125,15 @@ def deploy_component(component_dir, profile=None, creds={}, debug=False, dry_run
             _id = name
         else:
             _id = name + "-" + version
+
+        if component_exists(spec, profile, overwrite, creds):
+            if overwrite:
+                log.info("Replacing the component")
+            else:
+                log.info("Skipping publish")
+                return cli.component.get_component_description(_id)
+        else:
+            log.info("Component does not exist, deploying the component")
 
         if ignore_data:
             log.info("Upload data and metadata skipped")
