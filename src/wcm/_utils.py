@@ -3,6 +3,8 @@
 import logging
 import os
 import requests
+from pathlib import Path
+import configparser
 
 
 def init_logger():
@@ -12,6 +14,26 @@ def init_logger():
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.DEBUG if os.getenv("WINGS_DEBUG", False) else logging.INFO)
+
+
+def github_credentials(profile="default"):
+    creds_file = Path(os.getenv("WCM_CREDENTIALS_FILE", "~/.wcm/credentials"))
+    creds = creds_file.expanduser()
+
+    config = configparser.ConfigParser()
+    config.read(creds)
+
+    outp_creds = []
+
+    if profile in config:
+        try:
+            outp_creds.append(config[profile]["gitUsername"])
+            outp_creds.append(config[profile]["gitToken"])
+            return outp_creds
+        except KeyError:
+            return []
+    else:
+        return []
 
 
 def get_latest_version():

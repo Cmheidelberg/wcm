@@ -123,24 +123,13 @@ def configure(profile="default"):
         click.secho(f"Success", fg="green")
 
 
-@cli.command(help="Deploy the pacakge to the wcm.")
+@cli.command(help="Deploy the package to the wings server specified in credentials file.")
 @click.option("--debug/--no-debug", "-d/-nd", default=False)
 @click.option("--dry-run", "-n", is_flag=True)
 @click.option("--ignore-data/--no-ignore-data", "-i/-ni", default=False)
 @click.option("--overwrite", "-f", is_flag=True, help="Replace existing components")
-@click.option(
-    "--profile",
-    "-p",
-    envvar="WCM_PROFILE",
-    type=str,
-    default="default",
-    metavar="<profile-name>",
-)
-@click.argument(
-    "component",
-    type=click.Path(file_okay=False, dir_okay=True, writable=True, exists=True),
-    default=".",
-)
+@click.option("--profile", "-p", envvar="WCM_PROFILE", type=str, default="default", metavar="<profile-name>")
+@click.argument("component", type=click.Path(file_okay=False, dir_okay=True, writable=True, exists=True), default=".")
 def publish(component, profile="default", debug=False, dry_run=False, ignore_data=False, overwrite=False):
     logging.info("Publishing component")
     _component.deploy_component(
@@ -152,39 +141,22 @@ def publish(component, profile="default", debug=False, dry_run=False, ignore_dat
 
 @cli.command(help="Download a component from wings server. Data stored in .yaml file and source code downloaded to "
                   "folder within same directory. file-path can be specified to download into a specific directory")
-@click.option(
-    "--profile",
-    "-p",
-    envvar="WCM_PROFILE",
-    type=str,
-    default="default",
-    metavar="<profile-name>",
-)
-@click.option(
-    "--path",
-    "-p",
-    type=str,
-    default=None,
-)
+@click.option("--profile", "-p", envvar="WCM_PROFILE", type=str, default="default", metavar="<profile-name>")
+@click.option("--path", "-a", type=str, default=None)
 @click.option("--force", "-f", is_flag=True, help="Force Download, even if component already exists in local directory")
+@click.option("--wings", "-w", is_flag=True, help="Download component from wings server (instead of GitHub repo)")
 @click.argument("component_id", default=None, type=str)
-def download(component_id, profile="default", path=None, force=False):
+def download(component_id, profile="default", path=None, force=False, wings=False):
     logging.info("Downloading component")
-    _download.download(component_id, profile=profile, download_path=path, overwrite=force)
+    _download.download(component_id, profile=profile, download_path=path, overwrite=force, wings=wings)
     click.secho(f"Success", fg="green")
 
 
 @cli.command(help="Lists all the components in the current wings instance")
-@click.option(
-    "--profile",
-    "-p",
-    envvar="WCM_PROFILE",
-    type=str,
-    default="default",
-    metavar="<profile-name>",
-)
-def list(profile="default"):
-    _list.list_components(profile=profile)
+@click.option("--profile", "-p", envvar="WCM_PROFILE", type=str, default="default", metavar="<profile-name>")
+@click.option("--wings", "-w", is_flag=True, help="Lists wings server instead of GitHub")
+def list(profile="default", wings=False):
+    _list.list_components(profile=profile, wings=wings)
     click.secho(f"Done", fg="green")
 
 

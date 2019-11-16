@@ -1,6 +1,5 @@
 import argparse
 import concurrent.futures
-import configparser
 from contextlib import contextmanager
 import yaml
 import logging
@@ -8,7 +7,9 @@ import json
 import wings
 import click
 import os
+import base64
 import zipfile
+import requests
 import shutil
 from wcm import _schema, _utils
 
@@ -27,16 +28,21 @@ def _cli(**kw):
             i.close()
 
 
-def download(component_dir, profile=None, download_path=None, overwrite=False):
+def check_overwrite(path, overwrite):
+    # Checks if file already exists
+    if os.path.exists(path):
+        logger.info("\"" + path + "\" already exists")
+        if overwrite:
+            logger.info("Overwriting existing file")
+            shutil.rmtree(path)
+        else:
+            logger.error("Downloading this component would overwrite the existing one. "
+                         "To force download use flag -f")
+            logger.info("Aborting Download")
+            exit(0)
 
-    comp_id = component_dir
 
-    # sets path, this determines where the component will be downloaded. Default is the current directory of the program
-    if download_path is None:
-        path = os.getcwd()
-    else:
-        path = download_path
-
+def wings_download(path, comp_id, profile, overwrite):
     with _cli(profile=profile) as wings_instance:
         component = wings_instance.component.get_component_description(comp_id)
 
@@ -46,19 +52,7 @@ def download(component_dir, profile=None, download_path=None, overwrite=False):
 
         # Make new folder to put everything in
         path = os.path.join(path, comp_id)
-
-        # Checks if file already exists
-        if os.path.exists(path):
-            logger.info("\"" + path + "\" already exists")
-            if overwrite:
-                logger.info("Overwriting existing file")
-                shutil.rmtree(path)
-            else:
-                logger.error("Downloading this component would overwrite the existing one. "
-                             "To force download use flag -f")
-                logger.info("Aborting Download")
-                exit(0)
-
+        check_overwrite(path, overwrite)  # check if an existing file is already there
         os.mkdir(path)
 
         wings_instance.component.download_component(comp_id, os.path.join(path, "components"))
@@ -75,7 +69,7 @@ def download(component_dir, profile=None, download_path=None, overwrite=False):
         # yaml_data["author"] = None
         # yaml_data["container"] = None
         # yaml_data["repository"] = None
-        yaml_data["schemaVersion"] = _schema.get_schema_version();
+        yaml_data["schemaVersion"] = _schema.get_schema_version()
         yaml_data["wings"] = component
         component = yaml_data["wings"]
 
@@ -178,6 +172,136 @@ def download(component_dir, profile=None, download_path=None, overwrite=False):
         shutil.rmtree(comp_os_path)
 
         logger.info("Download complete")
+
+
+def github_download(path, comp_id, profile, overwrite):
+    repo = "mintproject/wcm-components"
+    session = requests.Session()
+
+    # get the gitHub api credentials from the wcm credentials file
+    creds = _utils.github_credentials(profile)
+
+    if len(creds) > 0:
+        # gives session credentials
+        username = creds[0]  # for authentication and committing
+        token = creds[1]
+        session.auth = (username, token)
+    else:
+        logger.error("Could not authenticate GitHub credentials from wcm credentials file")
+        logger.info("Cannot download component without proper credentials")
+        exit(1)
+
+    try:
+        # gets the tree sha of most recent version of master branch
+        master = session.get("https://api.github.com/repos/%s/branches/master" % repo)
+        master = json.loads(master.text)
+        sha = master['commit']['sha']
+
+        r = session.get("https://api.github.com/repos/%s/git/trees/%s?recursive=1" % (repo, sha))
+        jout = json.loads(r.text)
+        tree = jout["tree"]
+    except KeyError:
+        tree = {}
+        logger.error("Something went wrong accessing GitHub. Maybe the GitHub username or token is incorrect?")
+        exit(1)
+
+    # Once the tree, authentication and session are set up start trying to download
+    mod_ver = comp_id.split("-")
+    model = ""
+    version = ""
+
+    # Checks if user gave a component with version number or not
+    if len(mod_ver) == 1:
+        model = mod_ver[0]
+    elif len(mod_ver) == 2:
+        model = mod_ver[0]
+        version = mod_ver[1]
+
+    # Attempts to find the given component within the tree
+    for i in tree:
+        if i['path'] == model:
+            url = i['url']
+            git_dir = session.get(url)
+            git_dir = json.loads(git_dir.text)
+            model = {}
+
+            # If there is no version number just download the first indexed version from the GitHub repo
+            if version == "":
+                logger.info("No component version given.")
+                version = (git_dir['tree'])[-1]
+                model = version
+                logger.info("Using version: " + model["path"].split(".")[0])
+
+            # If there is a version number given and it is found use that one
+            else:
+                for j in git_dir['tree']:
+                    if j['path'] == version or j['path'] == (version + ".zip"):
+                        model = j
+
+            if model == {}:
+                logger.error("Incorrect model name or version")
+                exit(1)
+
+            content = session.get(model['url'])
+            content = json.loads(content.text)
+
+            dir_name = i["path"] + "-" + model["path"].split(".")[0]
+
+            path = os.path.join(path, dir_name)
+            check_overwrite(path, overwrite)
+
+            os.mkdir(path)  # make directory for zip
+
+            # Try to download zipped file from GitHub
+            try:
+                # base64 encoded file
+                zip_file = content["content"]
+                decode = base64.b64decode(zip_file)
+                print(os.path.join(path, dir_name + ".zip"))
+                with open(os.path.join(path, dir_name + ".zip"), 'wb') as f:
+                    f.write(decode)
+
+                # Unzip File
+                try:
+                    zip_path = os.path.join(path, dir_name + ".zip")
+                    with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                        zip_ref.extractall(path)
+                except zipfile.BadZipFile:
+                    logger.error("Downloaded zip file seems to be corrupt")
+                    exit(1)
+
+                # Remove zipped component
+                os.remove(zip_path)
+
+                logger.info("Download Complete")
+                return True
+            except KeyError:
+                logger.error("Requested file from GitHub cannot be downloaded. Maybe it is not zipped?")
+                exit(1)
+
+    logger.error("Could not find component with that name")
+
+
+def download(component_dir, profile=None, download_path=None, overwrite=False, wings=False):
+
+    comp_id = component_dir
+
+    # sets path, this determines where the component will be downloaded. Default is the current directory of the program
+    if download_path is None:
+        path = os.getcwd()
+    else:
+        path = download_path
+
+    # If user specifies to download from wings server
+    if wings:
+        logger.info("Using Wings")
+        wings_download(path, comp_id, profile, overwrite)
+
+    # else download from GitHub
+    else:
+        logger.info("Using GitHub")
+        github_download(path, comp_id, profile, overwrite)
+
 
 
 def _main():
