@@ -7,8 +7,11 @@ import os
 from contextlib import contextmanager
 from pathlib import Path
 from shutil import make_archive
-
+import requests
+import json
+import base64
 import wings
+import yaml
 from semver import parse_version_info
 from yaml import load
 import click
@@ -99,10 +102,135 @@ def component_exists(spec, profile, overwrite, credentials):
         return False
 
 
-def deploy_component(component_dir, profile=None, creds={}, debug=False, dry_run=False, ignore_data=False, overwrite=None):
-    component_dir = Path(component_dir)
-    if not component_dir.exists():
-        raise ValueError("Component directory does not exist.")
+def github_deploy(component_dir, overwrite, profile):
+    repo = "mintproject/wcm-components"
+    session = requests.Session()
+
+    # get the gitHub api credentials from the wcm credentials file
+    creds = _utils.github_credentials(profile)
+
+    if len(creds) > 0:
+        # gives session credentials
+        username = creds[0]  # for authentication and committing
+        token = creds[1]
+        session.auth = (username, token)
+    else:
+        log.error("Could not authenticate GitHub credentials from wcm credentials file")
+        log.info("Cannot publish component without proper credentials")
+        exit(1)
+
+    try:
+        # gets the tree sha of most recent version of master branch
+        master = session.get("https://api.github.com/repos/%s/branches/master" % repo)
+        master = json.loads(master.text)
+        sha = master['commit']['sha']
+
+        r = session.get("https://api.github.com/repos/%s/git/trees/%s?recursive=1" % (repo, sha))
+        jout = json.loads(r.text)
+        tree = jout["tree"]
+    except KeyError:
+        tree = {}
+        log.error("Something went wrong accessing GitHub. Maybe the GitHub username or token is incorrect?")
+        exit(1)
+
+    # Once authentication is set up start deploying to GitHub
+    log.info("Uploading component to GitHub")
+
+    if not os.path.exists(component_dir):
+        log.error("Could not find \"%s\" in path" % os.path.basename(component_dir))
+        exit(1)
+
+    # Reads the yaml and gets componentType and version
+    try:
+        try:
+            stream = open(os.path.join(component_dir, "wings-component.yaml"), 'r')
+        except FileNotFoundError:
+            stream = open(os.path.join(component_dir, "wings-component.yml"), 'r')
+
+        file_yaml = (yaml.safe_load(stream))
+
+    except FileNotFoundError:
+        log.error("could not find \"wings-component.yaml\" within %s aborting upload" % component_dir)
+        exit(1)
+
+    # Gets the model's name and version from yaml file
+    try:
+        name = file_yaml['name'].lower()
+        version = file_yaml["version"].lower()
+    except KeyError:
+        log.error("Could not ascertain component or version from YAML. Check to make sure YAML is configured properly")
+        exit(1)
+
+    # Zips up and base64 encript the folderfor uploading
+    _c = make_archive("tmp", "zip", component_dir)
+
+    with open("tmp.zip", "rb") as f:
+        zip_bytes = f.read()
+        encoded = base64.b64encode(zip_bytes).decode('utf-8')
+
+    # message should be from yaml information
+    params = {"message": "(wcm) Uploaded " + name,
+              "committer": {
+                  "name": "WCM",
+                  "email": "NONE"
+              },
+              "content": str(encoded)
+              }
+
+    git_path = name + "/" + version + ".zip"
+    url = 'https://api.github.com/repos/%s/wcm-components/contents/%s' % (username, git_path)
+
+    # Attempts to add the code to the repo
+    p = session.put(url, json.dumps(params))
+
+    if p.status_code == 422:
+        log.error("Upload Failed. Possibly because the component already exists in GitHub")
+        exit(1)
+    elif p.status_code == 400:
+        log.info("Upload Successful")
+    elif p.status_code == 404:
+        log.info("could not find repository")
+        exit(1)
+
+    os.remove(_c)
+
+    log.info("Making pull request")
+
+    base_url = 'https://api.github.com/repos/mintproject/wcm-components/pulls'
+    pr = {'title': '(wcm) New component(s) added',
+          'body': 'This pr was automatically made by wcm',
+          "committer": {
+              "name": "WCM",
+              "email": "none"
+          },
+          'head': '%s:master' % username,
+          'base': 'master'}
+
+    p = session.post(base_url, json.dumps(pr))
+
+    if p.status_code == 422:
+        log.info("Current pull request still active. Updating instead")
+        most_recent_commit = session.get("https://api.github.com/repos/mintproject/wcm-components/pulls")
+        most_recent_commit = json.loads(most_recent_commit.text)
+
+        commit_number = (most_recent_commit[0])["number"]
+        headers = {'Accept': 'application/vnd.github.lydian-preview+json'}
+
+        p = session.put(base_url + "/" + str(commit_number) + "/update-branch", headers=headers)
+
+    if p.status_code == 202:
+        log.info("Successfully updated pull with new component")
+    elif p.status_code == 201:
+        log.info("Successfully made pull request with new component")
+    elif p.status_code == 404:
+        log.error("Could not find either head or base repository from url")
+        exit(1)
+    else:
+        log.error("Unexpected status code from github api: %s" % p.status_code)
+        exit(1)
+
+
+def wings_deploy(component_dir, overwrite, creds, profile, debug, ignore_data, dry_run):
 
     with _cli(profile=profile, **creds) as cli:
         try:
@@ -160,6 +288,18 @@ def deploy_component(component_dir, profile=None, creds={}, debug=False, dry_run
             return cli.component.get_component_description(_id)
         finally:
             os.remove(_c)
+
+
+def deploy_component(component_dir, profile="default", debug=False, dry_run=False,
+                     ignore_data=False, overwrite=None, wings=False):
+    component_dir = Path(component_dir)
+
+    if not wings:
+        github_deploy(component_dir, overwrite, profile)
+
+    # runs if wings true
+    else:
+        wings_deploy(component_dir, overwrite, creds, profile, debug, ignore_data, dry_run)
 
 
 def _main():

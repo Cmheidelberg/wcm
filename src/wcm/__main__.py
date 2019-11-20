@@ -129,12 +129,12 @@ def configure(profile="default"):
 @click.option("--ignore-data/--no-ignore-data", "-i/-ni", default=False)
 @click.option("--overwrite", "-f", is_flag=True, help="Replace existing components")
 @click.option("--profile", "-p", envvar="WCM_PROFILE", type=str, default="default", metavar="<profile-name>")
+@click.option("--wings", "-w", is_flag=True, help="Publish component to wings server (instead of GitHub repo)")
 @click.argument("component", type=click.Path(file_okay=False, dir_okay=True, writable=True, exists=True), default=".")
-def publish(component, profile="default", debug=False, dry_run=False, ignore_data=False, overwrite=False):
+def publish(component, profile="default", debug=False, dry_run=False, ignore_data=False, overwrite=False, wings=False):
     logging.info("Publishing component")
-    _component.deploy_component(
-        component, profile=profile, debug=debug, dry_run=dry_run, ignore_data=ignore_data, overwrite=overwrite
-    )
+    _component.deploy_component(component, profile=profile, debug=debug, dry_run=dry_run,
+                                ignore_data=ignore_data, overwrite=overwrite, wings=wings)
 
     click.secho(f"Success", fg="green")
 
