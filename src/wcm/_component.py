@@ -103,8 +103,14 @@ def component_exists(spec, profile, overwrite, credentials):
 
 
 def github_deploy(component_dir, overwrite, profile):
-    repo = "mintproject/wcm-components"
+    repo = "cmheidelberg/wcm-components"
     session = requests.Session()
+
+    name = ""
+    version = ""
+    replace_sha = ""
+    tree = {}
+    file_yaml = None
 
     # get the gitHub api credentials from the wcm credentials file
     creds = _utils.github_credentials(profile)
@@ -129,7 +135,6 @@ def github_deploy(component_dir, overwrite, profile):
         jout = json.loads(r.text)
         tree = jout["tree"]
     except KeyError:
-        tree = {}
         log.error("Something went wrong accessing GitHub. Maybe the GitHub username or token is incorrect?")
         exit(1)
 
@@ -161,6 +166,25 @@ def github_deploy(component_dir, overwrite, profile):
         log.error("Could not ascertain component or version from YAML. Check to make sure YAML is configured properly")
         exit(1)
 
+    # Checks to see if the component already exists in GitHub
+    # if component is already in repo set record to component's sha so it can be properly overridden
+    # errors if wcm overwrite flag not set to True
+    for i in tree:
+        if i['path'] == name:
+            url = i['url']
+            url_folder = session.get(url)
+            url_folder = json.loads(url_folder.text)
+            for j in url_folder['tree']:
+                if j['path'].split(".")[0] == version:
+                    log.info("Component already exists in repo")
+                    if overwrite:
+                        replace_sha = j['sha']
+                        log.info("Overwriting component")
+                    else:
+                        log.error("Publishing this component would overwrite the existing one. "
+                                  "To force upload use flag -f")
+                        exit(1)
+
     # Zips up and base64 encript the folderfor uploading
     _c = make_archive("tmp", "zip", component_dir)
 
@@ -176,6 +200,9 @@ def github_deploy(component_dir, overwrite, profile):
               },
               "content": str(encoded)
               }
+
+    if len(replace_sha) > 0:
+        params['sha'] = replace_sha
 
     git_path = name + "/" + version + ".zip"
     url = 'https://api.github.com/repos/%s/wcm-components/contents/%s' % (username, git_path)

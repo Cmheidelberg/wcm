@@ -57,7 +57,7 @@ def list_components(profile="default", wings=False):
                     logger.error("Wings error: Maybe, the component is corrupted.")
 
     else:
-        repo = "mintproject/wcm-components"
+        repo = "cmheidelberg/wcm-components"
         git_session = requests.Session()
 
         # get the gitHub api credentials from the wcm credentials file

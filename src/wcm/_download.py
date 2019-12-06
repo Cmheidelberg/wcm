@@ -175,7 +175,7 @@ def wings_download(path, comp_id, profile, overwrite):
 
 
 def github_download(path, comp_id, profile, overwrite):
-    repo = "mintproject/wcm-components"
+    repo = "cmheidelberg/wcm-components"
     session = requests.Session()
 
     # get the gitHub api credentials from the wcm credentials file
@@ -257,7 +257,6 @@ def github_download(path, comp_id, profile, overwrite):
                 # base64 encoded file
                 zip_file = content["content"]
                 decode = base64.b64decode(zip_file)
-                print(os.path.join(path, dir_name + ".zip"))
                 with open(os.path.join(path, dir_name + ".zip"), 'wb') as f:
                     f.write(decode)
 
